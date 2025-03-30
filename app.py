@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import os
 import requests
 import base64
@@ -6,11 +6,14 @@ from PIL import Image
 import io
 import time
 import configparser
+import json
+import tempfile
+from docx import Document
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32MB
 
 class OCRProcessor:
     def __init__(self):
@@ -140,15 +143,85 @@ def upload_file():
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-@app.route('/config', methods=['POST'])
-def update_config():
-    data = request.json
-    ocr_processor.api_key = data.get('api_key', ocr_processor.api_key)
-    ocr_processor.api_url = data.get('api_url', ocr_processor.api_url)
-    ocr_processor.api_model = data.get('api_model', ocr_processor.api_model)
-    ocr_processor.max_retries = int(data.get('max_retries', ocr_processor.max_retries))
-    ocr_processor.save_config()
-    return jsonify({'status': '配置已更新'})
+@app.route('/export/docx', methods=['POST'])
+def export_docx():
+    try:
+        data = request.json
+        if not data or 'content' not in data:
+            return jsonify({'error': '没有提供内容'}), 400
+        
+        content = data['content']
+        
+        # 创建Word文档
+        doc = Document()
+        doc.add_heading('OCR识别结果', 0)
+        
+        # 添加内容
+        paragraphs = content.split('\n\n')
+        for para in paragraphs:
+            if para.startswith('=== 图片:'):
+                # 添加图片标题
+                doc.add_heading(para.strip(), level=1)
+            else:
+                # 添加正文内容
+                doc.add_paragraph(para)
+        
+        # 保存到临时文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
+        doc.save(temp_file.name)
+        temp_file.close()
+        
+        # 发送文件
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=f"OCR结果_{time.strftime('%Y%m%d_%H%M%S')}.docx",
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+    except Exception as e:
+        return jsonify({'error': f'导出失败: {str(e)}'}), 500
+
+@app.route('/export/txt', methods=['POST'])
+def export_txt():
+    try:
+        data = request.json
+        if not data or 'content' not in data:
+            return jsonify({'error': '没有提供内容'}), 400
+        
+        content = data['content']
+        
+        # 保存到临时文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+        with open(temp_file.name, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # 发送文件
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=f"OCR结果_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+            mimetype='text/plain'
+        )
+    except Exception as e:
+        return jsonify({'error': f'导出失败: {str(e)}'}), 500
+
+@app.route('/config', methods=['GET', 'POST'])
+def config():
+    if request.method == 'POST':
+        data = request.json
+        ocr_processor.api_key = data.get('api_key', ocr_processor.api_key)
+        ocr_processor.api_url = data.get('api_url', ocr_processor.api_url)
+        ocr_processor.api_model = data.get('api_model', ocr_processor.api_model)
+        ocr_processor.max_retries = int(data.get('max_retries', ocr_processor.max_retries))
+        ocr_processor.save_config()
+        return jsonify({'status': '配置已更新'})
+    else:
+        # 返回当前配置（不包含API密钥）
+        return jsonify({
+            'api_url': ocr_processor.api_url,
+            'api_model': ocr_processor.api_model,
+            'max_retries': ocr_processor.max_retries
+        })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
