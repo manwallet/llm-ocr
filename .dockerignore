@@ -1,0 +1,14 @@
+# 忽略本地开发文件
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+
+# 忽略上传的文件
+uploads/*
+!uploads/.gitkeep
+
